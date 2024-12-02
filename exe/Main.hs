@@ -1,13 +1,11 @@
 module Main where
 
 import Data.Time
-import Data.Time.Calendar.OrdinalDate
 import System.Exit (exitWith, exitSuccess, ExitCode(..))
 import System.Process (readProcess)
 import Data.List (isInfixOf)
 import Data.Char (toLower)
 
--- Convert a number to its English word representation (1-31)
 numberToWord :: Int -> String
 numberToWord n = case n of
     1 -> "one"
@@ -44,18 +42,46 @@ numberToWord n = case n of
     _ -> error "Invalid day number"
 
 -- Get the day number we should check for, considering the time
-getRelevantDay :: IO Int
-getRelevantDay = do
-    now <- getZonedTime
-    let localTime = zonedTimeToLocalTime now
-        (_, monthDay) = toOrdinalDate (localDay localTime)
-        hour = todHour $ localTimeOfDay localTime
+isBeforeMidnightCheck ::  (String -> IO TimeZone) ->IO Bool
+isBeforeMidnightCheck loadSystemTimeZone = do
+    -- Get the current time in UTC
+    now <- getCurrentTime
 
-    return $ if hour < 6
-            then if monthDay == 1
-                then 31  -- Handle month boundary
-                else monthDay - 1
-            else monthDay
+    -- Get New York's timezone (America/New_York)
+    nyTZ <- loadSystemTimeZone "America/New_York"
+
+    -- Get local timezone (which is east of NY in our case)
+    localTZ <- getCurrentTimeZone
+
+    -- Convert current UTC time to local time
+    let localT = utcToLocalTime localTZ now
+        localTD = localTimeOfDay localT
+        localHour = todHour localTD
+
+    -- Convert the same UTC time to NY time for reference
+    let nyTime = utcToLocalTime nyTZ now
+        nyDay = localDay nyTime
+
+    -- Calculate tomorrow and yesterday in NY timezone
+    let tomorrow = addDays 1 nyDay
+        yesterday = addDays (-1) nyDay
+
+    -- Since we're east of NY and before noon local time,
+    -- check if we're in yesterday's or tomorrow's boundary
+    if localHour < 12
+        then do
+            -- Calculate the UTC midnight points for comparison
+            tomorrowMidnight <- timeToTimeZone tomorrow nyTZ
+            yesterdayMidnight <- timeToTimeZone yesterday nyTZ
+            return $ now < tomorrowMidnight && now > yesterdayMidnight
+        else
+            return False
+    where
+        -- convert local midnight to UTC
+        timeToTimeZone day tz = do
+            let midnite = LocalTime day (TimeOfDay 0 0 0)
+            return $ localTimeToUTC tz midnite
+
 
 -- Check if any file contains the forbidden word
 containsForbiddenWord :: String -> [String] -> Bool
@@ -64,7 +90,7 @@ containsForbiddenWord word = any (isInfixOf (map toLower word) . map toLower)
 main :: IO ()
 main = do
     -- Check if any files in the repository contain forbidden day numbers
-    currentDay <- getRelevantDay
+    currentDay <- (\(_, _, d) -> d) . toGregorian . utctDay <$> getCurrentTime
     let forbiddenWords = [numberToWord currentDay]
 
     -- Get all tracked files
