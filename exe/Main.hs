@@ -94,7 +94,7 @@ main = do
     let forbiddenWords = [numberToWord currentDay]
 
     -- Get all tracked files
-    files <- lines <$> readProcess "git" ["ls-files"] ""
+    files <- lines <$> readProcess "git" ["diff", "@{push}"] "--name-only"
 
     let hasProblematicNames = any (`containsForbiddenWord` files) forbiddenWords
 
